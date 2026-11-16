@@ -1,0 +1,49 @@
+# ==============================================================================
+# Contexto Docker excluido para evitar copiar secretos, dependencias locales o pruebas
+# ==============================================================================
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.secret
+
+# Backend locales y pruebas
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/*.pyc
+backend/**/*.pyc
+backend/.pytest_cache
+backend/.ruff_cache
+backend/.mypy_cache
+backend/.coverage
+backend/coverage.xml
+backend/htmlcov
+backend/tests
+
+# Frontend locales y artefactos
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/coverage
+frontend/src/test
+
+# Documentación, CI y pruebas de stack
+docs
+database
+tests
+.scannerwork
+jenkins_home
+sonarqube_data
+postgres_data
+portainer_data
+README.md
+Jenkinsfile
+sonar-project.properties
+docker-compose.yml

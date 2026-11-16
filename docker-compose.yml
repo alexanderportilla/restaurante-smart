@@ -1,0 +1,216 @@
+services:
+  # ============================================================================
+  # PERFIL: app (Aplicación Restaurante Smart + PostgreSQL independiente)
+  # ============================================================================
+  postgres-app:
+    image: postgres:17.12-alpine3.24
+    container_name: postgres-app
+    profiles: ["app"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${APP_DB_NAME:-restaurante_smart}
+      POSTGRES_USER: ${APP_DB_USER:-restaurante_user}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD requerido en .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${APP_DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_app_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:-restaurante_user} -d ${APP_DB_NAME:-restaurante_smart}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: restaurante-smart-backend:1.0.0
+    container_name: restaurante-smart-backend
+    profiles: ["app"]
+    restart: unless-stopped
+    depends_on:
+      postgres-app:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      APP_DB_HOST: postgres-app
+      APP_DB_PORT: 5432
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    networks:
+      - app_network
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    image: restaurante-smart-frontend:1.0.0
+    container_name: restaurante-smart-frontend
+    profiles: ["app"]
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
+    networks:
+      - app_network
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # PERFIL: quality (SonarQube Community Build + PostgreSQL exclusivo)
+  # ============================================================================
+  postgres-sonar:
+    image: postgres:17.12-alpine3.24
+    container_name: postgres-sonar
+    profiles: ["quality"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SONAR_DB_NAME:-sonarqube}
+      POSTGRES_USER: ${SONAR_DB_USER:-sonar_user}
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD:?SONAR_DB_PASSWORD requerido en .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      TZ: UTC
+    volumes:
+      - postgres_sonar_data:/var/lib/postgresql/data
+    networks:
+      - devops_network
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SONAR_DB_USER:-sonar_user} -d ${SONAR_DB_NAME:-sonarqube}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  sonarqube:
+    image: sonarqube:26.11.0.134175-community
+    container_name: restaurante-smart-sonarqube
+    profiles: ["quality"]
+    restart: unless-stopped
+    depends_on:
+      postgres-sonar:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgres-sonar:5432/${SONAR_DB_NAME:-sonarqube}
+      SONAR_JDBC_USERNAME: ${SONAR_DB_USER:-sonar_user}
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:?SONAR_DB_PASSWORD requerido en .env}
+      SONAR_WEB_JAVAOPTS: "-Xms256m -Xmx512m"
+      SONAR_CE_JAVAOPTS: "-Xms256m -Xmx768m"
+      SONAR_SEARCH_JAVAOPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "127.0.0.1:${SONARQUBE_PORT:-9000}:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+    networks:
+      - devops_network
+    mem_limit: 2560m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/api/system/status | grep -q '\"status\":\"UP\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ============================================================================
+  # PERFIL: ci (Jenkins LTS JDK 21)
+  # ============================================================================
+  jenkins:
+    image: jenkins/jenkins:2.580.2-lts-jdk21
+    container_name: restaurante-smart-jenkins
+    profiles: ["ci"]
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=true -Xmx1024m"
+    ports:
+      - "127.0.0.1:${JENKINS_PORT:-8080}:8080"
+      - "127.0.0.1:${JENKINS_AGENT_PORT:-50000}:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - devops_network
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/login >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+
+  # ============================================================================
+  # PERFIL: ops (Portainer CE LTS compatible con Docker Engine 29)
+  # ============================================================================
+  portainer:
+    image: portainer/portainer-ce:2.45.3
+    container_name: restaurante-smart-portainer
+    profiles: ["ops"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PORTAINER_HTTPS_PORT:-9443}:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - devops_network
+    mem_limit: 256m
+
+networks:
+  app_network:
+    name: app_network
+    external: true
+  devops_network:
+    name: devops_network
+    driver: bridge
+
+volumes:
+  postgres_app_data:
+    name: postgres_app_data
+    external: true
+  postgres_sonar_data:
+    name: postgres_sonar_data
+  sonarqube_data:
+    name: sonarqube_data
+  sonarqube_logs:
+    name: sonarqube_logs
+  sonarqube_extensions:
+    name: sonarqube_extensions
+  jenkins_home:
+    name: jenkins_home
+  portainer_data:
+    name: portainer_data
