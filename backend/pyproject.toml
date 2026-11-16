@@ -1,0 +1,49 @@
+[project]
+name = "restaurante-smart-backend"
+version = "1.0.0"
+description = "Backend API modular para Restaurante Smart con FastAPI, SQLAlchemy 2 y PostgreSQL"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "alembic==1.20.1",
+    "email-validator==2.4.0",
+    "fastapi==0.163.1",
+    "psycopg[binary]==3.3.9",
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.3",
+    "pwdlib[argon2]==0.4.2",
+    "PyJWT==2.15.1",
+    "SQLAlchemy==2.1.8",
+    "uvicorn[standard]==0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.17.5",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "S"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]
+"migrations/**/*.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
