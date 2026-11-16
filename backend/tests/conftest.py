@@ -11,11 +11,12 @@ from sqlalchemy.exc import IntegrityError
 
 # Configurar variables de prueba antes de importar Settings/app (sin secretos reales)
 os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault(
-    "JWT_SECRET_KEY",
-    "test-only-jwt-secret-key-with-minimum-32-chars-restaurante-smart",
-)
-os.environ.setdefault("APP_DB_PASSWORD", "test-only-db-password")
+if os.getenv("RUN_POSTGRES_TESTS") != "1":
+    os.environ.setdefault(
+        "JWT_SECRET_KEY",
+        "test-only-jwt-secret-key-with-minimum-32-chars-restaurante-smart",
+    )
+    os.environ.setdefault("APP_DB_PASSWORD", "test-only-db-password")
 
 from app.api.dependencies import (
     get_auth_service,
