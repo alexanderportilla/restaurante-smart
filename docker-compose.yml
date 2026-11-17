@@ -126,8 +126,8 @@ services:
       SONAR_JDBC_URL: jdbc:postgresql://postgres-sonar:5432/${SONAR_DB_NAME:-sonarqube}
       SONAR_JDBC_USERNAME: ${SONAR_DB_USER:-sonar_user}
       SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:?SONAR_DB_PASSWORD requerido en .env}
-      SONAR_WEB_JAVAOPTS: "-Xms256m -Xmx512m"
-      SONAR_CE_JAVAOPTS: "-Xms256m -Xmx768m"
+      SONAR_WEB_JAVAOPTS: "-Xms256m -Xmx768m"
+      SONAR_CE_JAVAOPTS: "-Xms256m -Xmx1024m"
       SONAR_SEARCH_JAVAOPTS: "-Xms512m -Xmx512m"
     ports:
       - "127.0.0.1:${SONARQUBE_PORT:-9000}:9000"
@@ -137,11 +137,18 @@ services:
       - sonarqube_extensions:/opt/sonarqube/extensions
     networks:
       - devops_network
-    mem_limit: 2560m
+    mem_limit: 4096m
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+      nproc:
+        soft: 8192
+        hard: 8192
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/api/system/status | grep -q '\"status\":\"UP\"'"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/api/system/status | grep -q '\"status\":\"UP\"'"]
       interval: 20s
       timeout: 10s
       retries: 10
