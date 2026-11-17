@@ -155,30 +155,66 @@ services:
       start_period: 60s
 
   # ============================================================================
-  # PERFIL: ci (Jenkins LTS JDK 21)
+  # PERFIL: ci (Jenkins LTS JDK 21 + Agente aislado sin docker.sock — Opción B)
   # ============================================================================
   jenkins:
     image: jenkins/jenkins:2.580.2-lts-jdk21
     container_name: restaurante-smart-jenkins
     profiles: ["ci"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      JAVA_OPTS: "-Djenkins.install.runSetupWizard=true -Xmx1024m"
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=true -Xms256m -Xmx768m -XX:+UseG1GC"
     ports:
       - "127.0.0.1:${JENKINS_PORT:-8080}:8080"
       - "127.0.0.1:${JENKINS_AGENT_PORT:-50000}:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace/restaurante-smart:ro
     networks:
       - devops_network
     mem_limit: 1536m
+    cpus: "1.5"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/login >/dev/null || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 6
-      start_period: 45s
+      start_period: 60s
+
+  jenkins-agent:
+    build:
+      context: ./jenkins/agent
+      dockerfile: Dockerfile
+    image: restaurante-smart-jenkins-agent:jdk21
+    container_name: restaurante-smart-jenkins-agent
+    profiles: ["ci"]
+    restart: unless-stopped
+    depends_on:
+      jenkins:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      JENKINS_URL: "http://restaurante-smart-jenkins:8080"
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_AGENT_NAME: "restaurante-smart-agent"
+      JENKINS_AGENT_WORKDIR: "/home/jenkins/agent"
+      JENKINS_SECRET: "${JENKINS_AGENT_SECRET:-}"
+    volumes:
+      - jenkins_agent_data:/home/jenkins/agent
+      - .:/workspace/restaurante-smart:ro
+    networks:
+      - devops_network
+    mem_limit: 1536m
+    cpus: "1.5"
+    healthcheck:
+      test: ["CMD-SHELL", "grep -aq 'agent.jar' /proc/[0-9]*/cmdline || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   # ============================================================================
   # PERFIL: ops (Portainer CE LTS compatible con Docker Engine 29)
@@ -219,5 +255,7 @@ volumes:
     name: sonarqube_extensions
   jenkins_home:
     name: jenkins_home
+  jenkins_agent_data:
+    name: jenkins_agent_data
   portainer_data:
     name: portainer_data
