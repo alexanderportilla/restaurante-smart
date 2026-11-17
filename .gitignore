@@ -30,6 +30,8 @@ env/
 .coverage.*
 coverage.xml
 junit*.xml
+test-results/
+**/test-results/
 htmlcov/
 *.egg-info/
 .eggs/
@@ -43,6 +45,7 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/coverage/
+frontend/e2e-results/
 coverage/
 *.tsbuildinfo
 npm-debug.log*
@@ -52,6 +55,7 @@ pnpm-debug.log*
 # ==============================================================================
 # SonarQube / Jenkins / Docker / Datos locales
 # ==============================================================================
+.ci-workspace/
 .scannerwork/
 jenkins_home/
 sonarqube_data/
