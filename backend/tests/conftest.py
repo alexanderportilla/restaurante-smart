@@ -3,11 +3,13 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, IntegrityError
 
 # Configurar variables de prueba antes de importar Settings/app (sin secretos reales)
 os.environ.setdefault("APP_ENV", "test")
@@ -23,6 +25,7 @@ from app.api.dependencies import (
     get_catalog_service,
     get_current_user,
     get_notification_service,
+    get_optional_current_user,
     get_order_service,
     get_report_service,
     get_reservation_service,
@@ -30,8 +33,9 @@ from app.api.dependencies import (
     get_user_service,
 )
 from app.core.config import get_settings
+from app.core.rate_limit import auth_rate_limiter
 from app.core.security import create_access_token, hash_password
-from app.db.session import get_db
+from app.db.session import get_db, get_engine
 from app.main import create_app
 from app.models.auth import Permission, Role, User
 from app.models.orders import Notification, Order, OrderStatus
@@ -238,9 +242,16 @@ class FakeCatalogRepo:
     def get_category_by_id(self, category_id: int) -> Category | None:
         return self.store.categories.get(category_id)
 
-    def get_category_by_slug_or_name(self, slug: str, name: str) -> Category | None:
+    def get_category_by_slug_or_name(
+        self, slug: str, name: str, *, exclude_category_id: int | None = None
+    ) -> Category | None:
         return next(
-            (c for c in self.store.categories.values() if c.slug == slug or c.name == name),
+            (
+                c
+                for c in self.store.categories.values()
+                if (c.slug == slug or c.name == name)
+                and (exclude_category_id is None or c.id != exclude_category_id)
+            ),
             None,
         )
 
@@ -541,6 +552,13 @@ class FakeNotificationRepo:
         return notification
 
 
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter() -> Generator[None]:
+    auth_rate_limiter.clear()
+    yield
+    auth_rate_limiter.clear()
+
+
 @pytest.fixture
 def store() -> InMemoryStore:
     get_settings.cache_clear()
@@ -552,15 +570,11 @@ def api_context(store: InMemoryStore) -> Generator[dict[str, Any]]:
     """Prepara FastAPI TestClient con usuarios de los 4 roles y repositorios en memoria."""
     app = create_app()
 
-    admin = store.seed_user(
-        role_code="admin", email="admin@example.com", full_name="Admin Smart"
-    )
+    admin = store.seed_user(role_code="admin", email="admin@example.com", full_name="Admin Smart")
     manager = store.seed_user(
         role_code="manager", email="manager@example.com", full_name="Manager Smart"
     )
-    staff = store.seed_user(
-        role_code="staff", email="staff@example.com", full_name="Staff Smart"
-    )
+    staff = store.seed_user(role_code="staff", email="staff@example.com", full_name="Staff Smart")
     customer = store.seed_user(
         role_code="customer", email="cliente@example.com", full_name="Cliente Smart"
     )
@@ -611,7 +625,13 @@ def api_context(store: InMemoryStore) -> Generator[dict[str, Any]]:
             raise ForbiddenError("La cuenta de usuario está desactivada.")
         return user
 
+    def override_optional_current_user(credentials: Any = Depends(bearer_scheme)) -> User | None:
+        if credentials is None:
+            return None
+        return override_current_user(credentials)
+
     app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_optional_current_user] = override_optional_current_user
 
     def auth_headers(user: User) -> dict[str, str]:
         token = create_access_token(user.id, user.role.code)
@@ -635,3 +655,137 @@ def api_context(store: InMemoryStore) -> Generator[dict[str, Any]]:
                 "customer": auth_headers(customer),
             },
         }
+
+
+ALLOWED_TEST_DB_DRIVERS = frozenset({"postgresql", "postgresql+psycopg"})
+ALLOWED_TEST_DB_HOSTS = frozenset({"127.0.0.1", "localhost"})
+ALLOWED_TEST_DB_PORT = 5433
+ALLOWED_TEST_DB_NAME = "restaurante_smart_test"
+ALLOWED_TEST_DB_USER = "restaurante_test_user"
+FORBIDDEN_TEST_DB_QUERY_PARAMS = frozenset(
+    {
+        "host",
+        "hostaddr",
+        "port",
+        "service",
+        "passfile",
+        "pgpassfile",
+        "options",
+        "target_session_attrs",
+        "sslmode",
+        "sslkey",
+        "sslcert",
+        "sslrootcert",
+        "gsslib",
+    }
+)
+
+
+def validate_isolated_test_database_url(raw_url: str) -> str:
+    """Valida por allowlist estricta que TEST_DATABASE_URL apunte solo a la BD local aislada."""
+    if not isinstance(raw_url, str):
+        raise ValueError("TEST_DATABASE_URL debe ser una cadena de texto.")
+
+    candidate = raw_url.strip()
+    if not candidate:
+        raise ValueError("TEST_DATABASE_URL es obligatoria cuando RUN_POSTGRES_TESTS=1.")
+
+    if any(ch.isspace() or ord(ch) < 32 for ch in candidate):
+        raise ValueError(
+            "TEST_DATABASE_URL contiene caracteres de espacio o control no permitidos."
+        )
+
+    try:
+        split_url = urlsplit(candidate)
+        parsed = make_url(candidate)
+    except (ArgumentError, ValueError):
+        raise ValueError("TEST_DATABASE_URL tiene un formato de URL inválido.") from None
+
+    if split_url.fragment:
+        raise ValueError("TEST_DATABASE_URL no debe incluir fragmentos de URL.")
+
+    if parsed.drivername not in ALLOWED_TEST_DB_DRIVERS:
+        raise ValueError(
+            "Esquema/driver de TEST_DATABASE_URL no permitido; "
+            "solo se admite 'postgresql' o 'postgresql+psycopg'."
+        )
+
+    if parsed.host not in ALLOWED_TEST_DB_HOSTS:
+        raise ValueError(
+            "Host de TEST_DATABASE_URL no permitido; solo se admite '127.0.0.1' o 'localhost'."
+        )
+
+    if parsed.port != ALLOWED_TEST_DB_PORT:
+        raise ValueError("Puerto de TEST_DATABASE_URL no permitido; debe ser exactamente 5433.")
+
+    if parsed.database != ALLOWED_TEST_DB_NAME:
+        raise ValueError(
+            "Base de datos de TEST_DATABASE_URL no permitida; "
+            "debe ser exactamente 'restaurante_smart_test'."
+        )
+
+    if parsed.username != ALLOWED_TEST_DB_USER:
+        raise ValueError(
+            "Usuario de TEST_DATABASE_URL no permitido; "
+            "debe ser exactamente 'restaurante_test_user'."
+        )
+
+    if not parsed.password:
+        raise ValueError("TEST_DATABASE_URL debe incluir una contraseña no vacía.")
+
+    query_keys = {key.strip().lower() for key in parsed.query}
+    forbidden_keys = sorted(query_keys & FORBIDDEN_TEST_DB_QUERY_PARAMS)
+    if forbidden_keys:
+        raise ValueError(
+            "Parámetros de conexión prohibidos en TEST_DATABASE_URL: "
+            + ", ".join(forbidden_keys)
+            + "."
+        )
+
+    if parsed.query or split_url.query or "?" in candidate:
+        raise ValueError("No se permiten parámetros de consulta en TEST_DATABASE_URL.")
+
+    return candidate
+
+
+def require_isolated_test_database_url(run_flag: str | None, raw_url: str | None) -> str:
+    """Valida RUN_POSTGRES_TESTS == '1' y la allowlist estricta de TEST_DATABASE_URL."""
+    if run_flag != "1":
+        raise ValueError("RUN_POSTGRES_TESTS debe ser exactamente '1'.")
+    if raw_url is None:
+        raise ValueError("TEST_DATABASE_URL es obligatoria cuando RUN_POSTGRES_TESTS=1.")
+    return validate_isolated_test_database_url(raw_url)
+
+
+def apply_isolated_postgres_test_env(monkeypatch: pytest.MonkeyPatch) -> str | None:
+    """Aplica TEST_DATABASE_URL validada a DATABASE_URL sin crear conexiones si falla."""
+    if os.getenv("RUN_POSTGRES_TESTS") != "1":
+        return None
+    try:
+        validated_url = require_isolated_test_database_url(
+            os.getenv("RUN_POSTGRES_TESTS"),
+            os.getenv("TEST_DATABASE_URL"),
+        )
+    except ValueError as exc:
+        pytest.fail(str(exc), pytrace=False)
+    monkeypatch.setenv("DATABASE_URL", validated_url)
+    get_settings.cache_clear()
+    get_engine.cache_clear()
+    return validated_url
+
+
+def assert_isolated_postgres_test_env() -> str:
+    """Revalida la allowlist estricta antes de abrir sesiones o motores SQLAlchemy."""
+    try:
+        validated_url = require_isolated_test_database_url(
+            os.getenv("RUN_POSTGRES_TESTS"),
+            os.getenv("TEST_DATABASE_URL"),
+        )
+    except ValueError as exc:
+        pytest.fail(str(exc), pytrace=False)
+    if os.getenv("DATABASE_URL") != validated_url:
+        pytest.fail(
+            "DATABASE_URL no coincide con TEST_DATABASE_URL aislada validada.",
+            pytrace=False,
+        )
+    return validated_url

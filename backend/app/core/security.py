@@ -6,7 +6,7 @@ import jwt
 from jwt import InvalidTokenError
 from pwdlib import PasswordHash
 
-from app.core.config import get_settings
+from app.core.config import ALLOWED_JWT_ALGORITHMS, get_settings
 from app.core.exceptions import UnauthorizedError
 
 password_hasher = PasswordHash.recommended()
@@ -48,9 +48,18 @@ def create_access_token(
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    """Valida firma y vigencia de un JWT y devuelve sus claims."""
+    """Valida algoritmo permitido, firma y vigencia de un JWT y devuelve sus claims."""
     settings = get_settings()
     settings.validate_runtime_security()
+    try:
+        header = jwt.get_unverified_header(token)
+    except InvalidTokenError as exc:
+        raise UnauthorizedError("Token inválido o expirado.") from exc
+
+    token_alg = header.get("alg")
+    if token_alg not in ALLOWED_JWT_ALGORITHMS or token_alg != settings.JWT_ALGORITHM:
+        raise UnauthorizedError("Algoritmo de token no autorizado.")
+
     try:
         payload = jwt.decode(
             token,

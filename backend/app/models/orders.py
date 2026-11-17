@@ -86,9 +86,7 @@ class Order(TimestampMixin, Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User | None"] = relationship(back_populates="orders")
-    table: Mapped["RestaurantTable | None"] = relationship(
-        back_populates="orders", lazy="selectin"
-    )
+    table: Mapped["RestaurantTable | None"] = relationship(back_populates="orders", lazy="selectin")
     reservation: Mapped["Reservation | None"] = relationship(back_populates="orders")
     status: Mapped[OrderStatus] = relationship(back_populates="orders", lazy="selectin")
     items: Mapped[list["OrderItem"]] = relationship(

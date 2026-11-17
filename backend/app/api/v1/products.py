@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.dependencies import get_catalog_service, require_roles
+from app.api.dependencies import get_catalog_service, get_optional_current_user, require_roles
+from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.models.auth import User
 from app.schemas.catalog import ProductCreate, ProductResponse, ProductUpdate
 from app.schemas.common import PaginatedResponse
@@ -17,8 +18,14 @@ def list_products(
     search: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    actor: User | None = Depends(get_optional_current_user),
     catalog_service: CatalogService = Depends(get_catalog_service),
 ) -> PaginatedResponse[ProductResponse]:
+    if not only_active:
+        if actor is None:
+            raise UnauthorizedError("Autenticación requerida para consultar productos inactivos.")
+        if actor.role.code not in {"admin", "manager"}:
+            raise ForbiddenError("No posee permisos para consultar productos inactivos.")
     items, total = catalog_service.list_products(
         category_id=category_id,
         only_available=only_available,

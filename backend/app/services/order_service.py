@@ -55,23 +55,42 @@ class OrderService:
                 "Un pedido en mesa (dine_in) debe asociarse a una mesa o reserva."
             )
 
-        if payload.table_id is not None:
-            table = self.table_repo.get_by_id(payload.table_id)
-            if table is None or not table.is_active:
-                raise NotFoundError("La mesa asociada no existe o está inactiva.")
-
+        effective_table_id = payload.table_id
+        order_owner_id = actor.id
         if payload.reservation_id is not None:
             reservation = self.reservation_repo.get_by_id(payload.reservation_id)
             if reservation is None:
                 raise NotFoundError("La reserva asociada no existe.")
             if actor.role.code == "customer" and reservation.user_id != actor.id:
                 raise ForbiddenError("No puede asociar un pedido a una reserva de otro usuario.")
+            if reservation.status in {"cancelled", "no_show"}:
+                raise BusinessRuleError(
+                    "No se puede asociar un pedido a una reserva cancelada o marcada como no_show."
+                )
+            if payload.table_id is not None and payload.table_id != reservation.table_id:
+                raise BusinessRuleError(
+                    "La mesa del pedido no coincide con la mesa asignada a la reserva."
+                )
+            if effective_table_id is None:
+                effective_table_id = reservation.table_id
+            if reservation.user_id is not None:
+                order_owner_id = reservation.user_id
+
+        if effective_table_id is not None:
+            table = self.table_repo.get_by_id(effective_table_id)
+            if table is None or not table.is_active:
+                raise NotFoundError("La mesa asociada no existe o está inactiva.")
 
         pending_status = self.order_repo.get_status_by_code("pending")
         if pending_status is None:
             raise NotFoundError("No existe el estado inicial 'pending' en order_statuses.")
 
         product_ids = [item.product_id for item in payload.items]
+        if len(set(product_ids)) != len(product_ids):
+            raise BusinessRuleError(
+                "No se permiten productos duplicados en el mismo pedido; "
+                "ajusta la cantidad del ítem."
+            )
         products: dict[int, Product] = {
             product.id: product for product in self.catalog_repo.get_products_by_ids(product_ids)
         }
@@ -110,8 +129,8 @@ class OrderService:
         order_number = f"ORD-{datetime.now(UTC).strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
         order = Order(
             order_number=order_number,
-            user_id=actor.id,
-            table_id=payload.table_id,
+            user_id=order_owner_id,
+            table_id=effective_table_id,
             reservation_id=payload.reservation_id,
             status_id=pending_status.id,
             order_type=payload.order_type,
@@ -124,7 +143,7 @@ class OrderService:
 
         created = self.order_repo.create(order)
         self.notification_service.add_notification(
-            user_id=actor.id,
+            user_id=order_owner_id,
             event_type="order_created",
             title=f"Pedido {order_number} recibido",
             message=(
@@ -165,9 +184,7 @@ class OrderService:
         if actor.role.code == "customer" and (
             status_code != "cancelled" or order.status.code != "pending"
         ):
-            raise ForbiddenError(
-                "Solo puede cancelar su pedido mientras está en estado pendiente."
-            )
+            raise ForbiddenError("Solo puede cancelar su pedido mientras está en estado pendiente.")
 
         allowed = ORDER_TRANSITIONS.get(order.status.code, set())
         if status_code not in allowed:

@@ -91,6 +91,24 @@ class BusinessRuleError(AppError):
         )
 
 
+class TooManyRequestsError(AppError):
+    """Límite de tasa excedido."""
+
+    def __init__(
+        self,
+        message: str = "Demasiadas solicitudes. Inténtalo nuevamente más tarde.",
+        retry_after: int | None = None,
+    ) -> None:
+        details = {"retry_after_seconds": retry_after} if retry_after is not None else None
+        super().__init__(
+            message=message,
+            code="RATE_LIMIT_EXCEEDED",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            details=details,
+        )
+        self.retry_after = retry_after
+
+
 def _error_payload(code: str, message: str, details: Any = None) -> dict[str, Any]:
     return {"error": {"code": code, "message": message, "details": details}}
 
@@ -100,9 +118,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AppError)
     async def handle_app_error(_request: Request, exc: AppError) -> JSONResponse:
+        headers = (
+            {"Retry-After": str(exc.retry_after)}
+            if isinstance(exc, TooManyRequestsError) and exc.retry_after is not None
+            else None
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content=_error_payload(exc.code, exc.message, exc.details),
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)

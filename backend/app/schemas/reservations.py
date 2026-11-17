@@ -33,6 +33,31 @@ class ReservationStatusUpdate(BaseModel):
     status: ReservationStatusType
 
 
+class ReservationUpdate(BaseModel):
+    table_id: int | None = Field(default=None, gt=0)
+    customer_name: str | None = Field(default=None, min_length=2, max_length=120)
+    customer_email: EmailStr | None = None
+    customer_phone: str | None = Field(default=None, min_length=5, max_length=30)
+    party_size: int | None = Field(default=None, gt=0, le=50)
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_partial_time_range(self) -> "ReservationUpdate":
+        if self.start_time is not None and self.start_time.tzinfo is None:
+            raise ValueError("La hora de inicio debe incluir zona horaria (UTC/ISO 8601).")
+        if self.end_time is not None and self.end_time.tzinfo is None:
+            raise ValueError("La hora de fin debe incluir zona horaria (UTC/ISO 8601).")
+        if (
+            self.start_time is not None
+            and self.end_time is not None
+            and self.end_time <= self.start_time
+        ):
+            raise ValueError("La hora de fin debe ser posterior a la hora de inicio.")
+        return self
+
+
 class ReservationResponse(ORMBaseSchema):
     id: UUID
     user_id: UUID | None

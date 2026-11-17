@@ -4,6 +4,8 @@ from urllib.parse import quote_plus
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
+
 
 class Settings(BaseSettings):
     """Configuración centralizada de la aplicación leída desde variables de entorno."""
@@ -30,6 +32,12 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60, ge=5, le=1440)
 
+    AUTH_LOGIN_RATE_LIMIT: int = Field(default=10, ge=1, le=1000)
+    AUTH_LOGIN_RATE_WINDOW_SECONDS: int = Field(default=60, ge=1, le=3600)
+    AUTH_REGISTER_RATE_LIMIT: int = Field(default=5, ge=1, le=1000)
+    AUTH_REGISTER_RATE_WINDOW_SECONDS: int = Field(default=300, ge=1, le=86400)
+    TRUSTED_PROXY_IPS: str = "127.0.0.1,::1"
+
     CORS_ORIGINS: str = "http://localhost:3000"
     TAX_RATE: float = Field(default=0.12, ge=0.0, le=0.5)
 
@@ -37,6 +45,17 @@ class Settings(BaseSettings):
     @classmethod
     def ensure_leading_slash(cls, value: str) -> str:
         return value if value.startswith("/") else f"/{value}"
+
+    @field_validator("JWT_ALGORITHM")
+    @classmethod
+    def validate_jwt_algorithm(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in ALLOWED_JWT_ALGORITHMS:
+            allowed = ", ".join(sorted(ALLOWED_JWT_ALGORITHMS))
+            raise ValueError(
+                f"JWT_ALGORITHM '{value}' no permitido. Algoritmos válidos: {allowed}."
+            )
+        return normalized
 
     @computed_field
     @property
@@ -58,7 +77,9 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     def validate_runtime_security(self) -> None:
-        """Valida que los secretos críticos no usen valores de plantilla inseguros."""
+        """Valida que los secretos críticos y algoritmos JWT cumplan política segura."""
+        if self.JWT_ALGORITHM not in ALLOWED_JWT_ALGORITHMS:
+            raise RuntimeError("JWT_ALGORITHM no permitido por la política de seguridad.")
         if not self.JWT_SECRET_KEY or self.JWT_SECRET_KEY.startswith("CHANGE_ME_"):
             raise RuntimeError(
                 "JWT_SECRET_KEY no configurado o usando valor de plantilla inseguro."

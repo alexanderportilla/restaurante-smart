@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import ORMBaseSchema
 
@@ -40,6 +40,18 @@ class OrderCreate(BaseModel):
     reservation_id: UUID | None = None
     notes: str | None = Field(default=None, max_length=1000)
     items: list[OrderItemCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_products(self) -> "OrderCreate":
+        seen: set[int] = set()
+        for item in self.items:
+            if item.product_id in seen:
+                raise ValueError(
+                    "No se permiten productos duplicados en el mismo pedido; "
+                    "ajusta la cantidad del ítem."
+                )
+            seen.add(item.product_id)
+        return self
 
 
 class OrderStatusUpdate(BaseModel):

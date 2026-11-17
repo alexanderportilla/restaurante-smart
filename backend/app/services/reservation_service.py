@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -9,8 +9,10 @@ from app.models.auth import User
 from app.models.restaurant import Reservation
 from app.repositories.reservation_repository import ReservationRepository
 from app.repositories.table_repository import TableRepository
-from app.schemas.reservations import ReservationCreate
+from app.schemas.reservations import ReservationCreate, ReservationUpdate
 from app.services.notification_service import NotificationService
+
+TERMINAL_RESERVATION_STATUSES = {"completed", "cancelled", "no_show"}
 
 RESERVATION_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"confirmed", "cancelled"},
@@ -118,6 +120,90 @@ class ReservationService:
             raise ForbiddenError("No tiene permisos para consultar esta reserva.")
         return reservation
 
+    def update_reservation(
+        self,
+        reservation_id: UUID,
+        payload: ReservationUpdate,
+        actor: User,
+    ) -> Reservation:
+        reservation = self.get_reservation(reservation_id, actor)
+        if reservation.status in TERMINAL_RESERVATION_STATUSES:
+            raise BusinessRuleError(
+                f"No es posible modificar una reserva en estado '{reservation.status}'."
+            )
+
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return reservation
+
+        target_table_id = updates.get("table_id", reservation.table_id)
+        effective_party_size = updates.get("party_size", reservation.party_size)
+        effective_start = updates.get("start_time", reservation.start_time)
+        effective_end = updates.get("end_time", reservation.end_time)
+
+        if effective_start.tzinfo is None or effective_end.tzinfo is None:
+            raise BusinessRuleError("Las fechas deben incluir zona horaria (UTC/ISO 8601).")
+        if effective_end <= effective_start:
+            raise BusinessRuleError("La hora de fin debe ser posterior a la hora de inicio.")
+
+        db = self.reservation_repo.db
+        table = self.table_repo.lock_by_id(target_table_id)
+        if table is None:
+            raise NotFoundError("La mesa seleccionada no existe.")
+        if not table.is_active:
+            raise BusinessRuleError("La mesa seleccionada no está activa.")
+        if effective_party_size > table.capacity:
+            raise BusinessRuleError(
+                f"La mesa '{table.code}' tiene capacidad máxima de {table.capacity} personas."
+            )
+
+        if self.reservation_repo.has_overlapping_reservation(
+            table_id=table.id,
+            start_time=effective_start,
+            end_time=effective_end,
+            exclude_reservation_id=reservation.id,
+        ):
+            raise ConflictError("La mesa seleccionada ya tiene una reserva activa en ese horario.")
+
+        if "customer_name" in updates:
+            reservation.customer_name = updates["customer_name"].strip()
+        if "customer_email" in updates:
+            reservation.customer_email = updates["customer_email"].lower().strip()
+        if "customer_phone" in updates:
+            reservation.customer_phone = updates["customer_phone"].strip()
+        if "table_id" in updates:
+            reservation.table_id = table.id
+            reservation.table = table
+        if "party_size" in updates:
+            reservation.party_size = effective_party_size
+        if "start_time" in updates:
+            reservation.start_time = effective_start
+        if "end_time" in updates:
+            reservation.end_time = effective_end
+        if "notes" in updates:
+            reservation.notes = updates["notes"]
+
+        try:
+            self.notification_service.add_notification(
+                user_id=reservation.user_id,
+                event_type="reservation_updated",
+                title=f"Reserva {reservation.confirmation_code} modificada",
+                message=(
+                    f"Tu reserva para {reservation.party_size} personas en la mesa "
+                    f"{table.name} ({table.code}) ha sido actualizada."
+                ),
+                reference_type="reservation",
+                reference_id=reservation.id,
+            )
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise ConflictError(
+                "No se pudo modificar la reserva debido a un conflicto de disponibilidad."
+            ) from exc
+
+        return self.reservation_repo.get_by_id(reservation.id) or reservation
+
     def update_status(self, reservation_id: UUID, new_status: str, actor: User) -> Reservation:
         reservation = self.get_reservation(reservation_id, actor)
         if actor.role.code == "customer" and new_status != "cancelled":
@@ -128,6 +214,17 @@ class ReservationService:
             raise BusinessRuleError(
                 f"No es válido cambiar una reserva de '{reservation.status}' a '{new_status}'."
             )
+
+        if new_status == "cancelled":
+            res_start = (
+                reservation.start_time
+                if reservation.start_time.tzinfo is not None
+                else reservation.start_time.replace(tzinfo=UTC)
+            )
+            if res_start <= datetime.now(UTC):
+                raise BusinessRuleError(
+                    "No es posible cancelar una reserva cuya hora de inicio ya ha pasado."
+                )
 
         reservation.status = new_status
         self.notification_service.add_notification(

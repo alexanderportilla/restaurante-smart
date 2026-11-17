@@ -1,8 +1,9 @@
 from uuid import UUID
 
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import BusinessRuleError, ConflictError, ForbiddenError, NotFoundError
 from app.core.security import hash_password
 from app.models.auth import Role, User
+from app.repositories.base import commit_or_conflict
 from app.repositories.user_repository import UserRepository
 from app.schemas.users import UserCreate, UserUpdate
 
@@ -42,7 +43,10 @@ class UserService:
             is_active=payload.is_active,
         )
         created = self.user_repo.create(user)
-        self.user_repo.db.commit()
+        commit_or_conflict(
+            self.user_repo.db,
+            "Ya existe un usuario con ese correo electrónico.",
+        )
         return self.user_repo.get_by_id(created.id) or created
 
     def update_user(self, user_id: UUID, payload: UserUpdate, actor: User) -> User:
@@ -56,6 +60,12 @@ class UserService:
 
         if (payload.role_code is not None or payload.is_active is not None) and not is_admin:
             raise ForbiddenError("Solo un administrador puede cambiar roles o estado de cuenta.")
+
+        if actor.id == user_id:
+            if payload.is_active is False:
+                raise BusinessRuleError("Un administrador no puede desactivar su propia cuenta.")
+            if payload.role_code is not None and payload.role_code != user.role.code:
+                raise BusinessRuleError("Un administrador no puede cambiar su propio rol.")
 
         if payload.full_name is not None:
             user.full_name = payload.full_name.strip()
@@ -72,7 +82,10 @@ class UserService:
             user.role_id = role.id
             user.role = role
 
-        self.user_repo.db.commit()
+        commit_or_conflict(
+            self.user_repo.db,
+            "No fue posible actualizar el usuario por un conflicto de integridad.",
+        )
         return self.user_repo.get_by_id(user.id) or user
 
     def list_roles(self) -> list[Role]:

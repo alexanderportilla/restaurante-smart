@@ -1,6 +1,6 @@
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.restaurant import Category, Product
-from app.repositories.base import apply_updates
+from app.repositories.base import apply_updates, commit_or_conflict
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CategoryCreate, CategoryUpdate, ProductCreate, ProductUpdate
 
@@ -15,11 +15,19 @@ class CatalogService:
         return self.catalog_repo.list_categories(only_active=only_active)
 
     def create_category(self, payload: CategoryCreate) -> Category:
-        if self.catalog_repo.get_category_by_slug_or_name(payload.slug, payload.name) is not None:
+        data = payload.model_dump()
+        data["name"] = data["name"].strip()
+        data["slug"] = data["slug"].strip()
+        if data.get("description") is not None:
+            data["description"] = data["description"].strip() or None
+        if self.catalog_repo.get_category_by_slug_or_name(data["slug"], data["name"]) is not None:
             raise ConflictError("Ya existe una categoría con ese nombre o slug.")
-        category = Category(**payload.model_dump())
+        category = Category(**data)
         created = self.catalog_repo.create_category(category)
-        self.catalog_repo.db.commit()
+        commit_or_conflict(
+            self.catalog_repo.db,
+            "Ya existe una categoría con ese nombre o slug.",
+        )
         return created
 
     def update_category(self, category_id: int, payload: CategoryUpdate) -> Category:
@@ -27,8 +35,27 @@ class CatalogService:
         if category is None:
             raise NotFoundError("Categoría no encontrada.")
         updates = payload.model_dump(exclude_unset=True)
+        if updates.get("name") is not None:
+            updates["name"] = updates["name"].strip()
+        if updates.get("slug") is not None:
+            updates["slug"] = updates["slug"].strip()
+        if "description" in updates and updates["description"] is not None:
+            updates["description"] = updates["description"].strip() or None
+        if "slug" in updates or "name" in updates:
+            target_slug = updates.get("slug", category.slug)
+            target_name = updates.get("name", category.name)
+            if (
+                self.catalog_repo.get_category_by_slug_or_name(
+                    target_slug, target_name, exclude_category_id=category_id
+                )
+                is not None
+            ):
+                raise ConflictError("Ya existe una categoría con ese nombre o slug.")
         apply_updates(category, updates)
-        self.catalog_repo.db.commit()
+        commit_or_conflict(
+            self.catalog_repo.db,
+            "Ya existe una categoría con ese nombre o slug.",
+        )
         self.catalog_repo.db.refresh(category)
         return category
 
@@ -67,11 +94,16 @@ class CatalogService:
     def create_product(self, payload: ProductCreate) -> Product:
         if self.catalog_repo.get_category_by_id(payload.category_id) is None:
             raise NotFoundError("La categoría especificada no existe.")
-        if self.catalog_repo.get_product_by_sku(payload.sku) is not None:
+        data = payload.model_dump()
+        data["name"] = data["name"].strip()
+        data["sku"] = data["sku"].strip()
+        if data.get("description") is not None:
+            data["description"] = data["description"].strip() or None
+        if self.catalog_repo.get_product_by_sku(data["sku"]) is not None:
             raise ConflictError("Ya existe un producto con ese SKU.")
-        product = Product(**payload.model_dump())
+        product = Product(**data)
         created = self.catalog_repo.create_product(product)
-        self.catalog_repo.db.commit()
+        commit_or_conflict(self.catalog_repo.db, "Ya existe un producto con ese SKU.")
         return self.catalog_repo.get_product_by_id(created.id) or created
 
     def update_product(self, product_id: int, payload: ProductUpdate) -> Product:
@@ -79,13 +111,22 @@ class CatalogService:
         if product is None:
             raise NotFoundError("Producto no encontrado.")
         updates = payload.model_dump(exclude_unset=True)
+        if updates.get("name") is not None:
+            updates["name"] = updates["name"].strip()
+        if updates.get("sku") is not None:
+            updates["sku"] = updates["sku"].strip()
+            existing = self.catalog_repo.get_product_by_sku(updates["sku"])
+            if existing is not None and existing.id != product_id:
+                raise ConflictError("Ya existe un producto con ese SKU.")
+        if "description" in updates and updates["description"] is not None:
+            updates["description"] = updates["description"].strip() or None
         if (
             "category_id" in updates
             and self.catalog_repo.get_category_by_id(updates["category_id"]) is None
         ):
             raise NotFoundError("La categoría especificada no existe.")
         apply_updates(product, updates)
-        self.catalog_repo.db.commit()
+        commit_or_conflict(self.catalog_repo.db, "Ya existe un producto con ese SKU.")
         return self.catalog_repo.get_product_by_id(product.id) or product
 
     def delete_product(self, product_id: int) -> None:

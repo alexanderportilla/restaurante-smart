@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.exceptions import UnauthorizedError, register_exception_handlers
 from app.core.security import (
     create_access_token,
@@ -13,6 +13,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.main import create_app
 
 
 def test_argon2_hash_and_verify() -> None:
@@ -82,3 +83,38 @@ def test_centralized_exception_handlers_hide_internal_errors() -> None:
     body = res.json()
     assert body["error"]["code"] == "INTERNAL_SERVER_ERROR"
     assert "sensible" not in body["error"]["message"]
+
+
+def test_fastapi_startup_validates_jwt_security(monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        # 1. Entorno normal con clave insegura impide iniciar FastAPI
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("JWT_SECRET_KEY", "CHANGE_ME_GENERATE_RANDOM_64_HEX_SECRET")
+        get_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="JWT_SECRET_KEY"), TestClient(create_app()):
+            pass
+
+        # 2. Entorno normal con clave corta impide iniciar FastAPI
+        monkeypatch.setenv("JWT_SECRET_KEY", "demasiado-corta")
+        get_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="JWT_SECRET_KEY"), TestClient(create_app()):
+            pass
+
+        # 3. Entorno normal con clave válida permite iniciar la aplicación
+        monkeypatch.setenv("JWT_SECRET_KEY", "x" * 64)
+        get_settings.cache_clear()
+        with TestClient(create_app()) as client:
+            assert client.app.title == "Restaurante Smart API"
+
+        # 4. Entorno test con configuración explícita permite ejecutar pruebas
+        monkeypatch.setenv("APP_ENV", "test")
+        monkeypatch.setenv(
+            "JWT_SECRET_KEY",
+            "test-only-jwt-secret-key-with-minimum-32-chars-restaurante-smart",
+        )
+        get_settings.cache_clear()
+        with TestClient(create_app()) as client:
+            assert client.app.version == "1.0.0"
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()

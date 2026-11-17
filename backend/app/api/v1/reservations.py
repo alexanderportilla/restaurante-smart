@@ -10,6 +10,7 @@ from app.schemas.reservations import (
     ReservationCreate,
     ReservationResponse,
     ReservationStatusUpdate,
+    ReservationUpdate,
 )
 from app.services.reservation_service import ReservationService
 
@@ -53,6 +54,16 @@ def get_reservation(
     reservation_service: ReservationService = Depends(get_reservation_service),
 ) -> ReservationResponse:
     return reservation_service.get_reservation(reservation_id, actor)
+
+
+@router.patch("/{reservation_id}", response_model=ReservationResponse)
+def update_reservation(
+    reservation_id: UUID,
+    payload: ReservationUpdate,
+    actor: User = Depends(get_current_user),
+    reservation_service: ReservationService = Depends(get_reservation_service),
+) -> ReservationResponse:
+    return reservation_service.update_reservation(reservation_id, payload, actor)
 
 
 @router.patch("/{reservation_id}/status", response_model=ReservationResponse)

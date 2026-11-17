@@ -27,11 +27,10 @@ from app.services.user_service import UserService
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    db: Session = Depends(get_db),
+def _resolve_user_from_credentials(
+    credentials: HTTPAuthorizationCredentials | None,
+    db: Session,
 ) -> User:
-    """Extrae y valida el token Bearer JWT y retorna el usuario activo."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise UnauthorizedError("Se requiere token de autenticación Bearer.")
 
@@ -47,6 +46,24 @@ def get_current_user(
     if not user.is_active:
         raise ForbiddenError("La cuenta de usuario está desactivada.")
     return user
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Extrae y valida el token Bearer JWT y retorna el usuario activo."""
+    return _resolve_user_from_credentials(credentials, db)
+
+
+def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Retorna el usuario activo si se envía Authorization Bearer válido, o None si es anónimo."""
+    if credentials is None:
+        return None
+    return _resolve_user_from_credentials(credentials, db)
 
 
 def require_roles(*allowed_roles: str) -> Callable[[User], User]:

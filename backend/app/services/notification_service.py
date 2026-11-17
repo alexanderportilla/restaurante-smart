@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import NotFoundError
 from app.models.auth import User
 from app.models.orders import Notification
 from app.repositories.notification_repository import NotificationRepository
@@ -54,10 +54,8 @@ class NotificationService:
 
     def mark_as_read(self, notification_id: UUID, actor: User) -> Notification:
         notification = self.notification_repo.get_by_id(notification_id)
-        if notification is None:
+        if notification is None or notification.user_id != actor.id:
             raise NotFoundError("Notificación no encontrada.")
-        if notification.user_id != actor.id and actor.role.code not in {"admin", "manager"}:
-            raise ForbiddenError("No tiene permisos para modificar esta notificación.")
         notification.is_read = True
         self.notification_repo.db.commit()
         self.notification_repo.db.refresh(notification)

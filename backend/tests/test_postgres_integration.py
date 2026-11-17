@@ -28,14 +28,35 @@ from app.services.notification_service import NotificationService
 from app.services.order_service import OrderService
 from app.services.report_service import ReportService
 from app.services.reservation_service import ReservationService
-
-pytestmark = pytest.mark.skipif(
-    os.getenv("RUN_POSTGRES_TESTS") != "1",
-    reason="Pruebas reales contra PostgreSQL desactivadas (establecer RUN_POSTGRES_TESTS=1).",
+from tests.conftest import (
+    apply_isolated_postgres_test_env,
+    assert_isolated_postgres_test_env,
 )
 
 
+def _get_isolated_test_database_url() -> str | None:
+    if os.getenv("RUN_POSTGRES_TESTS") != "1":
+        return None
+    test_db_url = os.getenv("TEST_DATABASE_URL", "").strip()
+    return test_db_url or None
+
+
+pytestmark = pytest.mark.skipif(
+    _get_isolated_test_database_url() is None,
+    reason=(
+        "Pruebas reales contra PostgreSQL desactivadas "
+        "(establecer RUN_POSTGRES_TESTS=1 y TEST_DATABASE_URL aislada)."
+    ),
+)
+
+
+@pytest.fixture(autouse=True)
+def _use_isolated_postgres_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_isolated_postgres_test_env(monkeypatch)
+
+
 def test_postgres_schema_btree_gist_and_seed_catalogs() -> None:
+    assert_isolated_postgres_test_env()
     get_settings.cache_clear()
     get_engine.cache_clear()
     session_factory = get_session_factory()
@@ -50,10 +71,7 @@ def test_postgres_schema_btree_gist_and_seed_catalogs() -> None:
         assert ext == "btree_gist"
 
         constraint = db.execute(
-            text(
-                "SELECT contype FROM pg_constraint "
-                "WHERE conname = 'uq_reservations_no_overlap';"
-            )
+            text("SELECT contype FROM pg_constraint WHERE conname = 'uq_reservations_no_overlap';")
         ).scalar_one_or_none()
         assert constraint == "x"
 
@@ -75,6 +93,7 @@ def test_postgres_schema_btree_gist_and_seed_catalogs() -> None:
 
 
 def test_postgres_crud_exclusion_constraint_transactions_and_e2e_api() -> None:
+    assert_isolated_postgres_test_env()
     get_settings.cache_clear()
     get_engine.cache_clear()
     session_factory = get_session_factory()

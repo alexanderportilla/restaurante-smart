@@ -20,8 +20,12 @@ class CatalogRepository:
     def get_category_by_id(self, category_id: int) -> Category | None:
         return self.db.get(Category, category_id)
 
-    def get_category_by_slug_or_name(self, slug: str, name: str) -> Category | None:
+    def get_category_by_slug_or_name(
+        self, slug: str, name: str, *, exclude_category_id: int | None = None
+    ) -> Category | None:
         stmt = select(Category).where(or_(Category.slug == slug, Category.name == name))
+        if exclude_category_id is not None:
+            stmt = stmt.where(Category.id != exclude_category_id)
         return self.db.scalar(stmt)
 
     def create_category(self, category: Category) -> Category:
@@ -54,9 +58,7 @@ class CatalogRepository:
 
     def get_product_by_id(self, product_id: int) -> Product | None:
         stmt = (
-            select(Product)
-            .options(selectinload(Product.category))
-            .where(Product.id == product_id)
+            select(Product).options(selectinload(Product.category)).where(Product.id == product_id)
         )
         return self.db.scalar(stmt)
 

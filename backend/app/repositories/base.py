@@ -1,7 +1,10 @@
 from typing import Any
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from app.core.exceptions import ConflictError
 
 
 def paginate_scalars[ModelT](
@@ -23,3 +26,12 @@ def apply_updates(instance: Any, updates: dict[str, Any]) -> Any:
     for field, value in updates.items():
         setattr(instance, field, value)
     return instance
+
+
+def commit_or_conflict(db: Session, conflict_message: str) -> None:
+    """Confirma la transacción traduciendo IntegrityError a ConflictError sin exponer SQL."""
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ConflictError(conflict_message) from exc

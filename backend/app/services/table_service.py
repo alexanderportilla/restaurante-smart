@@ -2,7 +2,7 @@ from datetime import datetime
 
 from app.core.exceptions import BusinessRuleError, ConflictError, NotFoundError
 from app.models.restaurant import RestaurantTable
-from app.repositories.base import apply_updates
+from app.repositories.base import apply_updates, commit_or_conflict
 from app.repositories.table_repository import TableRepository
 from app.schemas.tables import TableCreate, TableUpdate
 
@@ -16,12 +16,26 @@ class TableService:
     def list_tables(self, *, only_active: bool = False) -> list[RestaurantTable]:
         return self.table_repo.list_tables(only_active=only_active)
 
+    def get_table(self, table_id: int) -> RestaurantTable:
+        table = self.table_repo.get_by_id(table_id)
+        if table is None:
+            raise NotFoundError("Mesa no encontrada.")
+        return table
+
     def create_table(self, payload: TableCreate) -> RestaurantTable:
-        if self.table_repo.get_by_code(payload.code) is not None:
+        normalized_code = payload.code.strip()
+        if self.table_repo.get_by_code(normalized_code) is not None:
             raise ConflictError("Ya existe una mesa registrada con ese código.")
-        table = RestaurantTable(**payload.model_dump())
+        data = payload.model_dump()
+        data["code"] = normalized_code
+        data["name"] = payload.name.strip()
+        data["location"] = payload.location.strip()
+        table = RestaurantTable(**data)
         created = self.table_repo.create(table)
-        self.table_repo.db.commit()
+        commit_or_conflict(
+            self.table_repo.db,
+            "Ya existe una mesa registrada con ese código.",
+        )
         return created
 
     def update_table(self, table_id: int, payload: TableUpdate) -> RestaurantTable:
@@ -29,14 +43,19 @@ class TableService:
         if table is None:
             raise NotFoundError("Mesa no encontrada.")
         updates = payload.model_dump(exclude_unset=True)
-        if (
-            "code" in updates
-            and updates["code"] != table.code
-            and self.table_repo.get_by_code(updates["code"]) is not None
-        ):
-            raise ConflictError("Ya existe una mesa con ese código.")
+        if "code" in updates:
+            updates["code"] = updates["code"].strip()
+            if (
+                updates["code"] != table.code
+                and self.table_repo.get_by_code(updates["code"]) is not None
+            ):
+                raise ConflictError("Ya existe una mesa con ese código.")
+        if "name" in updates:
+            updates["name"] = updates["name"].strip()
+        if "location" in updates:
+            updates["location"] = updates["location"].strip()
         apply_updates(table, updates)
-        self.table_repo.db.commit()
+        commit_or_conflict(self.table_repo.db, "Ya existe una mesa con ese código.")
         self.table_repo.db.refresh(table)
         return table
 

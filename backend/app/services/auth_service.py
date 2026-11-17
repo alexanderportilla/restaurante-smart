@@ -2,6 +2,7 @@ from app.core.config import get_settings
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.auth import User
+from app.repositories.base import commit_or_conflict
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import CurrentUserResponse, LoginRequest, RegisterRequest, TokenResponse
 
@@ -45,7 +46,10 @@ class AuthService:
             is_active=True,
         )
         created = self.user_repo.create(user)
-        self.user_repo.db.commit()
+        commit_or_conflict(
+            self.user_repo.db,
+            "Ya existe una cuenta registrada con ese correo electrónico.",
+        )
         return self.user_repo.get_by_id(created.id) or created
 
     def login(self, payload: LoginRequest) -> TokenResponse:
