@@ -4,6 +4,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router';
 import { AlertBanner } from '../components/AlertBanner';
 import { useAuth } from '../hooks/useAuth';
 import { extractApiError } from '../services/httpClient';
+import { isValidEmail } from '../utils/formatters';
 
 export function LoginPage() {
   const { isAuthenticated, login, register } = useAuth();
@@ -34,6 +35,11 @@ export function LoginPage() {
       return;
     }
 
+    if (!isValidEmail(email)) {
+      setError('Ingresa un correo electrónico con formato válido.');
+      return;
+    }
+
     if (mode === 'register' && fullName.trim().length < 2) {
       setError('El nombre completo debe tener al menos 2 caracteres.');
       return;
@@ -48,7 +54,7 @@ export function LoginPage() {
     try {
       if (mode === 'login') {
         await login({ email: email.trim(), password });
-        navigate(redirectTo, { replace: true });
+        await navigate(redirectTo, { replace: true });
       } else {
         await register({
           full_name: fullName.trim(),

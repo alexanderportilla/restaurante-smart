@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
 
 import { useAuth } from '../hooks/useAuth';
@@ -18,6 +18,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/catalog', label: 'Menú y Categorías' },
   { to: '/tables', label: 'Mesas', roles: ['admin', 'manager', 'staff'] },
   { to: '/notifications', label: 'Notificaciones' },
+  { to: '/profile', label: 'Mi perfil' },
   { to: '/reports', label: 'Reportes', roles: ['admin', 'manager'] },
   { to: '/users', label: 'Usuarios y Roles', roles: ['admin', 'manager'] },
 ];
@@ -26,19 +27,38 @@ export function AppLayout() {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [menuOpen]);
+
   const visibleLinks = NAV_ITEMS.filter(
     (item) => !item.roles || (user && item.roles.includes(user.role_code)),
   );
 
   return (
     <div className="app-shell">
+      {menuOpen && (
+        <div
+          className="sidebar-backdrop"
+          role="presentation"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
       <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Navegación principal">
         <div className="sidebar-brand">
           <strong>Restaurante Smart</strong>
           <button
             type="button"
-            className="mobile-menu-btn"
-            style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.25)' }}
+            className="mobile-menu-btn mobile-close-btn"
             onClick={() => setMenuOpen(false)}
             aria-label="Cerrar menú"
           >

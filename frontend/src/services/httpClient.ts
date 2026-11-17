@@ -56,11 +56,29 @@ export function extractApiError(error: unknown): ApiClientError {
     const data = axiosError.response?.data;
 
     if (data?.error?.message) {
+      let message = data.error.message;
+      if (Array.isArray(data.error.details) && data.error.details.length > 0) {
+        const firstDetail = data.error.details[0] as { msg?: unknown; loc?: unknown };
+        if (typeof firstDetail?.msg === 'string' && firstDetail.msg.trim()) {
+          const field = Array.isArray(firstDetail.loc)
+            ? String(firstDetail.loc[firstDetail.loc.length - 1] ?? '')
+            : '';
+          message = field ? `${message} (${field}: ${firstDetail.msg})` : `${message} (${firstDetail.msg})`;
+        }
+      }
       return new ApiClientError(
-        data.error.message,
+        message,
         status,
         data.error.code ?? 'API_ERROR',
         data.error.details ?? null,
+      );
+    }
+
+    if (axiosError.code === 'ECONNABORTED' || axiosError.message.toLowerCase().includes('timeout')) {
+      return new ApiClientError(
+        'La solicitud tardó demasiado tiempo en responder. Inténtalo de nuevo.',
+        408,
+        'TIMEOUT_ERROR',
       );
     }
 
@@ -69,6 +87,22 @@ export function extractApiError(error: unknown): ApiClientError {
         'No fue posible conectar con el servidor de Restaurante Smart.',
         0,
         'NETWORK_ERROR',
+      );
+    }
+
+    if (status === 429) {
+      return new ApiClientError(
+        'Demasiadas solicitudes. Espera un momento antes de volver a intentarlo.',
+        429,
+        'RATE_LIMIT_EXCEEDED',
+      );
+    }
+
+    if (status >= 500) {
+      return new ApiClientError(
+        'Error interno del servidor. Inténtalo nuevamente más tarde.',
+        status,
+        'SERVER_ERROR',
       );
     }
 

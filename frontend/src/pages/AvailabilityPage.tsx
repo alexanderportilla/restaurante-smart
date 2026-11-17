@@ -27,6 +27,12 @@ export function AvailabilityPage() {
       return;
     }
 
+    const partyCount = Number(partySize);
+    if (!Number.isInteger(partyCount) || partyCount < 1 || partyCount > 50) {
+      setError('El número de comensales debe estar entre 1 y 50.');
+      return;
+    }
+
     const startIso = toUtcIsoString(startLocal);
     const endIso = toUtcIsoString(endLocal);
     if (new Date(endIso) <= new Date(startIso)) {
@@ -36,11 +42,7 @@ export function AvailabilityPage() {
 
     setLoading(true);
     try {
-      const response = await tablesService.checkAvailability(
-        startIso,
-        endIso,
-        Number(partySize) || 1,
-      );
+      const response = await tablesService.checkAvailability(startIso, endIso, partyCount);
       setResult(response);
     } catch (err) {
       setError(extractApiError(err).message);

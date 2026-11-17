@@ -9,6 +9,11 @@ export const tablesService = {
     return data;
   },
 
+  async getTable(tableId: number): Promise<RestaurantTable> {
+    const { data } = await httpClient.get<RestaurantTable>(`/tables/${tableId}`);
+    return data;
+  },
+
   async createTable(payload: TablePayload): Promise<RestaurantTable> {
     const { data } = await httpClient.post<RestaurantTable>('/tables', payload);
     return data;

@@ -7,6 +7,7 @@ import { DashboardPage } from '../pages/DashboardPage';
 import { LoginPage } from '../pages/LoginPage';
 import { NotificationsPage } from '../pages/NotificationsPage';
 import { OrdersPage } from '../pages/OrdersPage';
+import { ProfilePage } from '../pages/ProfilePage';
 import { ReportsPage } from '../pages/ReportsPage';
 import { ReservationsPage } from '../pages/ReservationsPage';
 import { TablesPage } from '../pages/TablesPage';
@@ -26,6 +27,7 @@ export function AppRoutes() {
           <Route path="orders" element={<OrdersPage />} />
           <Route path="catalog" element={<CatalogPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="profile" element={<ProfilePage />} />
 
           <Route element={<ProtectedRoute allowedRoles={['admin', 'manager', 'staff']} />}>
             <Route path="tables" element={<TablesPage />} />

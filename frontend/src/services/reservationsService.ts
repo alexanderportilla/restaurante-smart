@@ -4,6 +4,7 @@ import type {
   Reservation,
   ReservationCreatePayload,
   ReservationStatus,
+  ReservationUpdatePayload,
 } from '../types/api';
 
 export interface ReservationQueryParams {
@@ -31,6 +32,14 @@ export const reservationsService = {
 
   async createReservation(payload: ReservationCreatePayload): Promise<Reservation> {
     const { data } = await httpClient.post<Reservation>('/reservations', payload);
+    return data;
+  },
+
+  async updateReservation(
+    reservationId: string,
+    payload: ReservationUpdatePayload,
+  ): Promise<Reservation> {
+    const { data } = await httpClient.patch<Reservation>(`/reservations/${reservationId}`, payload);
     return data;
   },
 

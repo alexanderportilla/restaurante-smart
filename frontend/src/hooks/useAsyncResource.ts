@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { extractApiError } from '../services/httpClient';
 
@@ -17,8 +17,10 @@ export function useAsyncResource<T>(
   const [data, setData] = useState<T | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(enabled);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     if (!enabled) {
       setIsLoading(false);
       return;
@@ -27,11 +29,17 @@ export function useAsyncResource<T>(
     setError(null);
     try {
       const result = await fetcher();
-      setData(result);
+      if (requestId === requestIdRef.current) {
+        setData(result);
+      }
     } catch (err) {
-      setError(extractApiError(err).message);
+      if (requestId === requestIdRef.current) {
+        setError(extractApiError(err).message);
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [fetcher, enabled]);
 
@@ -39,27 +47,27 @@ export function useAsyncResource<T>(
     if (!enabled) {
       return;
     }
-    let cancelled = false;
+    const requestId = ++requestIdRef.current;
     fetcher()
       .then((result) => {
-        if (!cancelled) {
+        if (requestId === requestIdRef.current) {
           setData(result);
           setError(null);
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
+        if (requestId === requestIdRef.current) {
           setError(extractApiError(err).message);
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (requestId === requestIdRef.current) {
           setIsLoading(false);
         }
       });
 
     return () => {
-      cancelled = true;
+      requestIdRef.current += 1;
     };
   }, [fetcher, enabled]);
 

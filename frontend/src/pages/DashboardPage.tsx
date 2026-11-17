@@ -10,7 +10,7 @@ import { notificationsService } from '../services/notificationsService';
 import { ordersService } from '../services/ordersService';
 import { reportsService } from '../services/reportsService';
 import { reservationsService } from '../services/reservationsService';
-import { formatCurrency, formatDateTime } from '../utils/formatters';
+import { formatCurrency, formatDateTime, formatOrderType } from '../utils/formatters';
 
 export function DashboardPage() {
   const { user, hasRole } = useAuth();
@@ -147,7 +147,7 @@ export function DashboardPage() {
                       {data.orders.items.map((order) => (
                         <tr key={order.id}>
                           <td>{order.order_number}</td>
-                          <td>{order.order_type}</td>
+                          <td>{formatOrderType(order.order_type)}</td>
                           <td>{formatCurrency(order.total_amount)}</td>
                           <td>
                             <StatusBadge status={order.status.code} />

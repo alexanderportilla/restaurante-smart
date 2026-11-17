@@ -1,30 +1,39 @@
 import { useCallback, useState } from 'react';
+import { Link } from 'react-router';
 
 import { AlertBanner } from '../components/AlertBanner';
 import { LoadingState } from '../components/LoadingState';
+import { PaginationControls } from '../components/PaginationControls';
 import { useAsyncResource } from '../hooks/useAsyncResource';
 import { extractApiError } from '../services/httpClient';
 import { notificationsService } from '../services/notificationsService';
 import { formatDateTime } from '../utils/formatters';
 
+const PAGE_LIMIT = 50;
+
 export function NotificationsPage() {
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(
-    () => notificationsService.listNotifications(unreadOnly, 50, 0),
-    [unreadOnly],
+    () => notificationsService.listNotifications(unreadOnly, PAGE_LIMIT, offset),
+    [unreadOnly, offset],
   );
 
   const { data, isLoading, error, reload } = useAsyncResource(fetchNotifications);
 
   async function handleMarkRead(notificationId: string) {
     setActionError(null);
+    setBusyId(notificationId);
     try {
       await notificationsService.markAsRead(notificationId);
       await reload();
     } catch (err) {
       setActionError(extractApiError(err).message);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -41,7 +50,10 @@ export function NotificationsPage() {
           <input
             type="checkbox"
             checked={unreadOnly}
-            onChange={(e) => setUnreadOnly(e.target.checked)}
+            onChange={(e) => {
+              setUnreadOnly(e.target.checked);
+              setOffset(0);
+            }}
           />
           <span>Mostrar solo no leídas</span>
         </label>
@@ -69,10 +81,21 @@ export function NotificationsPage() {
                   <span className={`badge ${item.is_read ? 'badge-neutral' : 'badge-info'}`}>
                     {item.is_read ? 'Leída' : 'Nueva'}
                   </span>
+                  {item.reference_type === 'reservation' && (
+                    <Link to="/reservations" className="btn btn-secondary btn-sm">
+                      Ver reservas
+                    </Link>
+                  )}
+                  {item.reference_type === 'order' && (
+                    <Link to="/orders" className="btn btn-secondary btn-sm">
+                      Ver pedidos
+                    </Link>
+                  )}
                   {!item.is_read && (
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"
+                      disabled={busyId === item.id}
                       onClick={() => void handleMarkRead(item.id)}
                     >
                       Marcar leída
@@ -83,6 +106,14 @@ export function NotificationsPage() {
               <p style={{ margin: 0 }}>{item.message}</p>
             </article>
           ))}
+          <div className="card">
+            <PaginationControls
+              total={data.total}
+              limit={PAGE_LIMIT}
+              offset={offset}
+              onPageChange={setOffset}
+            />
+          </div>
         </div>
       )}
     </div>

@@ -116,9 +116,47 @@ describe('httpClient y servicios API tipados', () => {
     ]);
   });
 
-  it('extractApiError maneja errores genéricos', () => {
+  it('extractApiError maneja errores genéricos y límite de tasa 429', () => {
     const err = extractApiError(new Error('Fallo local'));
     expect(err).toBeInstanceOf(ApiClientError);
     expect(err.message).toBe('Fallo local');
+  });
+
+  it('normaliza respuestas 429 de rate limiting con y sin cuerpo estructurado', async () => {
+    httpClient.defaults.adapter = async (config: InternalAxiosRequestConfig) =>
+      Promise.reject({
+        isAxiosError: true,
+        message: 'Too Many Requests',
+        response: {
+          status: 429,
+          data: {
+            error: {
+              code: 'RATE_LIMIT_EXCEEDED',
+              message: 'Demasiadas solicitudes de autenticación.',
+              details: { retry_after_seconds: 60 },
+            },
+          },
+        },
+        config,
+      });
+
+    await expect(authService.login({ email: 'a@example.com', password: 'Password123!' })).rejects.toMatchObject({
+      status: 429,
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Demasiadas solicitudes de autenticación.',
+    });
+
+    httpClient.defaults.adapter = async (config: InternalAxiosRequestConfig) =>
+      Promise.reject({
+        isAxiosError: true,
+        message: 'Request failed with status code 429',
+        response: { status: 429, data: {} },
+        config,
+      });
+
+    await expect(authService.login({ email: 'a@example.com', password: 'Password123!' })).rejects.toMatchObject({
+      status: 429,
+      code: 'RATE_LIMIT_EXCEEDED',
+    });
   });
 });

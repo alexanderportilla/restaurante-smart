@@ -198,6 +198,17 @@ export interface ReservationCreatePayload {
   notes?: string;
 }
 
+export interface ReservationUpdatePayload {
+  table_id?: number;
+  customer_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
+  party_size?: number;
+  start_time?: string;
+  end_time?: string;
+  notes?: string | null;
+}
+
 export interface OrderStatus {
   id: number;
   code: string;

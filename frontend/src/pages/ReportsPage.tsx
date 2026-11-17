@@ -9,6 +9,7 @@ import { formatCurrency, toUtcIsoString } from '../utils/formatters';
 export function ReportsPage() {
   const [fromLocal, setFromLocal] = useState('');
   const [toLocal, setToLocal] = useState('');
+  const [filterError, setFilterError] = useState<string | null>(null);
   const [appliedRange, setAppliedRange] = useState<{ from_date?: string; to_date?: string }>({});
 
   const fetchReports = useCallback(async () => {
@@ -23,6 +24,11 @@ export function ReportsPage() {
 
   function handleApplyFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setFilterError(null);
+    if (fromLocal && toLocal && new Date(toLocal) < new Date(fromLocal)) {
+      setFilterError('La fecha final no puede ser anterior a la fecha inicial.');
+      return;
+    }
     setAppliedRange({
       from_date: fromLocal ? toUtcIsoString(fromLocal) : undefined,
       to_date: toLocal ? toUtcIsoString(toLocal) : undefined,
@@ -39,6 +45,9 @@ export function ReportsPage() {
       </div>
 
       {error && <AlertBanner variant="error" message={error} />}
+      {filterError && (
+        <AlertBanner variant="error" message={filterError} onDismiss={() => setFilterError(null)} />
+      )}
 
       <section className="card" style={{ marginBottom: '1.25rem' }}>
         <form onSubmit={handleApplyFilter}>
