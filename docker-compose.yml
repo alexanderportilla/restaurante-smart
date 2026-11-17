@@ -171,7 +171,6 @@ services:
       - "127.0.0.1:${JENKINS_AGENT_PORT:-50000}:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      - .:/workspace/restaurante-smart:ro
     networks:
       - devops_network
     mem_limit: 1536m
@@ -204,7 +203,7 @@ services:
       JENKINS_SECRET: "${JENKINS_AGENT_SECRET:-}"
     volumes:
       - jenkins_agent_data:/home/jenkins/agent
-      - .:/workspace/restaurante-smart:ro
+      - ./.ci-workspace:/workspace/restaurante-smart:ro
     networks:
       - devops_network
     mem_limit: 1536m
@@ -217,21 +216,10 @@ services:
       start_period: 30s
 
   # ============================================================================
-  # PERFIL: ops (Portainer CE LTS compatible con Docker Engine 29)
+  # PERFIL: ops (Portainer CE LTS — retirado temporalmente tras auditoría Fase 12)
+  # La incorporación de Portainer queda aplazada hasta contar con proxy de socket
+  # endurecido y sin acceso directo a /var/run/docker.sock.
   # ============================================================================
-  portainer:
-    image: portainer/portainer-ce:2.45.3
-    container_name: restaurante-smart-portainer
-    profiles: ["ops"]
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${PORTAINER_HTTPS_PORT:-9443}:9443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
-    networks:
-      - devops_network
-    mem_limit: 256m
 
 networks:
   app_network:
@@ -257,5 +245,3 @@ volumes:
     name: jenkins_home
   jenkins_agent_data:
     name: jenkins_agent_data
-  portainer_data:
-    name: portainer_data

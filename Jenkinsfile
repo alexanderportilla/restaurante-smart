@@ -15,27 +15,36 @@ pipeline {
         APP_ENV = 'test'
         PYTHONUNBUFFERED = '1'
         UV_LINK_MODE = 'copy'
-        UV_CACHE_DIR = "${WORKSPACE}/.cache/uv"
-        npm_config_cache = "${WORKSPACE}/.cache/npm"
+        UV_CACHE_DIR = '/home/jenkins/agent/.cache/uv'
+        npm_config_cache = '/home/jenkins/agent/.cache/npm'
     }
 
     stages {
         stage('1. Checkout') {
             steps {
                 script {
-                    if (!fileExists('sonar-project.properties')) {
+                    if (env.GIT_URL) {
+                        checkout scm
+                    } else {
+                        deleteDir()
                         checkout([
                             $class: 'GitSCM',
                             branches: [[name: '*/main']],
                             doGenerateSubmoduleConfigurations: false,
+                            extensions: [[$class: 'CleanBeforeCheckout']],
                             userRemoteConfigs: [[url: '/workspace/restaurante-smart']]
                         ])
                     }
                     sh '''
-                        git config --global --add safe.directory /workspace/restaurante-smart || true
+                        set -eu
+                        if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq '/workspace/restaurante-smart'; then
+                            git config --global --add safe.directory /workspace/restaurante-smart || true
+                        fi
+                        test -f sonar-project.properties
                         echo "=== SCM Info ==="
                         git rev-parse --abbrev-ref HEAD
-                        git rev-parse --short HEAD
+                        git rev-parse HEAD
+                        git log -1 --oneline
                         git status --short
                     '''
                 }
