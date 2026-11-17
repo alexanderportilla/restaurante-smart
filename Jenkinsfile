@@ -155,12 +155,16 @@ pipeline {
         stage('11. Análisis SonarQube') {
             steps {
                 withSonarQubeEnv('sonarqube-local') {
-                    withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                    withCredentials([
+                        string(
+                            credentialsId: 'sonarqube-token',
+                            variable: 'SONAR_TOKEN'
+                        )
+                    ]) {
                         sh '''
                             set -eu
                             sonar-scanner \
-                                -Dsonar.host.url="${SONAR_HOST_URL}" \
-                                -Dsonar.token="${SONAR_TOKEN}"
+                                -Dsonar.host.url="${SONAR_HOST_URL}"
                         '''
                     }
                 }
