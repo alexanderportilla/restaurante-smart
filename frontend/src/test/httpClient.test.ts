@@ -13,6 +13,7 @@ import {
 import { ordersService } from '../services/ordersService';
 import { reservationsService } from '../services/reservationsService';
 import { tablesService } from '../services/tablesService';
+import { usersService } from '../services/usersService';
 
 describe('httpClient y servicios API tipados', () => {
   const originalAdapter = httpClient.defaults.adapter;
@@ -158,5 +159,47 @@ describe('httpClient y servicios API tipados', () => {
       status: 429,
       code: 'RATE_LIMIT_EXCEEDED',
     });
+  });
+
+  it('usersService invoca endpoints de usuarios y roles correctamente', async () => {
+    const captured: Array<{ url: string; method: string; data?: unknown }> = [];
+
+    const mockAdapter: AxiosAdapter = async (config: InternalAxiosRequestConfig) => {
+      captured.push({
+        url: config.url ?? '',
+        method: config.method ?? '',
+        data: config.data ? JSON.parse(String(config.data)) : undefined,
+      });
+
+      return {
+        data: { id: 'u-1', items: [], total: 0, code: 'staff' },
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders(),
+        config,
+      };
+    };
+
+    httpClient.defaults.adapter = mockAdapter;
+
+    await usersService.listUsers(20, 0);
+    await usersService.getUser('u-123');
+    await usersService.createUser({
+      full_name: 'Test',
+      email: 't@example.com',
+      password: 'Pass12345!',
+      role_code: 'staff',
+      is_active: true,
+    });
+    await usersService.updateUser('u-123', { full_name: 'Test Update' });
+    await usersService.listRoles();
+
+    expect(captured.map((c) => `${c.method.toUpperCase()} ${c.url}`)).toEqual([
+      'GET /users',
+      'GET /users/u-123',
+      'POST /users',
+      'PATCH /users/u-123',
+      'GET /roles',
+    ]);
   });
 });

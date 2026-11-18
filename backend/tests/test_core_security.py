@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -43,6 +44,88 @@ def test_jwt_create_decode_and_reject_invalid() -> None:
     expired = create_access_token(uid, "manager", expires_delta=timedelta(seconds=-10))
     with pytest.raises(UnauthorizedError):
         decode_access_token(expired)
+
+
+def test_decode_access_token_security_scenarios() -> None:
+    settings = get_settings()
+    uid = uuid4()
+
+    # 1. Token válido
+    valid_token = create_access_token(uid, "customer", expires_delta=timedelta(minutes=15))
+    claims = decode_access_token(valid_token)
+    assert claims["sub"] == str(uid)
+    assert claims["role"] == "customer"
+    assert claims["type"] == "access"
+
+    # 2. Token con firma incorrecta (firmado con clave diferente)
+    wrong_key_token = jwt.encode(
+        {
+            "sub": str(uid),
+            "role": "customer",
+            "type": "access",
+            "iat": int(datetime.now(UTC).timestamp()),
+            "exp": int((datetime.now(UTC) + timedelta(minutes=15)).timestamp()),
+        },
+        "wrong-secret-key-that-does-not-match-settings-32ch",
+        algorithm="HS256",
+    )
+    with pytest.raises(UnauthorizedError):
+        decode_access_token(wrong_key_token)
+
+    # 3. Token expirado
+    expired_token = jwt.encode(
+        {
+            "sub": str(uid),
+            "role": "customer",
+            "type": "access",
+            "iat": int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+            "exp": int((datetime.now(UTC) - timedelta(minutes=5)).timestamp()),
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+    with pytest.raises(UnauthorizedError):
+        decode_access_token(expired_token)
+
+    # 4. Token manipulado (payload o firma alterados)
+    tampered_parts = valid_token.split(".")
+    tampered_token = f"{tampered_parts[0]}.eyJyZXBsYWNlZCI6InRydWUifQ.{tampered_parts[2]}"
+    with pytest.raises(UnauthorizedError):
+        decode_access_token(tampered_token)
+
+    # 5. Algoritmo no permitido (algoritmo 'none' y algoritmo diferente como HS384 o RS256)
+    none_alg_token = jwt.encode(
+        {
+            "sub": str(uid),
+            "role": "customer",
+            "type": "access",
+            "iat": int(datetime.now(UTC).timestamp()),
+            "exp": int((datetime.now(UTC) + timedelta(minutes=15)).timestamp()),
+        },
+        key="",
+        algorithm="none",
+    )
+    with pytest.raises(UnauthorizedError):
+        decode_access_token(none_alg_token)
+
+    other_alg_token = jwt.encode(
+        {
+            "sub": str(uid),
+            "role": "customer",
+            "type": "access",
+            "iat": int(datetime.now(UTC).timestamp()),
+            "exp": int((datetime.now(UTC) + timedelta(minutes=15)).timestamp()),
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm="HS384",
+    )
+    with pytest.raises(UnauthorizedError):
+        decode_access_token(other_alg_token)
+
+    # 6. Token malformado (no es un JWT válido o truncado)
+    for malformed in ["", "not-a-token", "header.only", "a.b.c.d", "invalid!!base64..token"]:
+        with pytest.raises(UnauthorizedError):
+            decode_access_token(malformed)
 
 
 def test_settings_validation_and_database_url() -> None:

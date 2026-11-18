@@ -63,7 +63,58 @@ export function toLocalDateTimeInput(isoString: string): string {
 }
 
 export function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 254) {
+    return false;
+  }
+
+  const atIndex = trimmed.indexOf('@');
+  if (atIndex <= 0 || atIndex !== trimmed.lastIndexOf('@') || atIndex === trimmed.length - 1) {
+    return false;
+  }
+
+  const localPart = trimmed.slice(0, atIndex);
+  const domainPart = trimmed.slice(atIndex + 1);
+
+  if (
+    localPart.length === 0 ||
+    localPart.length > 64 ||
+    domainPart.length === 0 ||
+    domainPart.length > 253
+  ) {
+    return false;
+  }
+
+  if (
+    localPart.startsWith('.') ||
+    localPart.endsWith('.') ||
+    localPart.includes('..') ||
+    domainPart.startsWith('.') ||
+    domainPart.endsWith('.') ||
+    domainPart.includes('..')
+  ) {
+    return false;
+  }
+
+  const domainLabels = domainPart.split('.');
+  if (domainLabels.length < 2) {
+    return false;
+  }
+
+  const labelRegex = /^[a-zA-Z0-9-]+$/;
+  for (const label of domainLabels) {
+    if (!label || label.startsWith('-') || label.endsWith('-') || !labelRegex.test(label)) {
+      return false;
+    }
+  }
+
+  const tld = domainLabels[domainLabels.length - 1];
+  if (tld.length < 2 || /^\d+$/.test(tld)) {
+    return false;
+  }
+
+  const localCharRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$/;
+  return localCharRegex.test(localPart);
 }
 
 export function defaultDateTimeRange(): { startLocal: string; endLocal: string } {
