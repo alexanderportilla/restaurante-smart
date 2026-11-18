@@ -321,17 +321,15 @@ print('Despliegue confirmado por Deployer:', res.get('message'))
                     echo "=== Ejecución de pruebas de humo sobre Staging ==="
                     
                     echo "1. Comprobando servicio Deployer y Podman socket..."
-                    curl -s -f http://172.19.0.1:8088/health | grep -q '"status": "ok"'
+                    curl -s -f http://172.19.0.1:8088/health | python3 -c "import sys, json; data = json.load(sys.stdin); assert data.get('status') == 'ok' and data.get('podman_socket') == 'ok'"
                     echo "  [PASS] Deployer y Podman Rootless socket operativos."
                     
                     echo "2. Comprobando API Backend Staging (GET /api/v1/health)..."
-                    BE_HEALTH=$(curl -s -f http://172.19.0.1:8002/api/v1/health)
-                    echo "${BE_HEALTH}" | grep -q '"status": "ok"'
-                    echo "${BE_HEALTH}" | grep -q '"database": "connected"'
+                    curl -s -f http://172.19.0.1:8002/api/v1/health | python3 -c "import sys, json; data = json.load(sys.stdin); assert data.get('status') == 'ok' and data.get('database') == 'connected'"
                     echo "  [PASS] Backend saludable y conectado a PostgreSQL 17 Staging."
                     
                     echo "3. Comprobando especificación OpenAPI (GET /api/v1/openapi.json)..."
-                    curl -s -f http://172.19.0.1:8002/api/v1/openapi.json | grep -q 'Restaurante Smart'
+                    curl -s -f http://172.19.0.1:8002/api/v1/openapi.json | python3 -c "import sys, json; data = json.load(sys.stdin); assert data.get('openapi', '').startswith('3.') and 'Restaurante Smart' in data.get('info', {}).get('title', '')"
                     echo "  [PASS] Esquema OpenAPI 3.1.0 válido servido por Backend."
                     
                     echo "4. Comprobando Frontend Staging (GET /)..."
@@ -339,8 +337,7 @@ print('Despliegue confirmado por Deployer:', res.get('message'))
                     echo "  [PASS] Frontend SPA React servido correctamente."
                     
                     echo "5. Comprobando enrutamiento proxy Nginx (GET /api/v1/health desde frontend)..."
-                    PROXY_HEALTH=$(curl -s -f http://172.19.0.1:3002/api/v1/health)
-                    echo "${PROXY_HEALTH}" | grep -q '"status": "ok"'
+                    curl -s -f http://172.19.0.1:3002/api/v1/health | python3 -c "import sys, json; data = json.load(sys.stdin); assert data.get('status') == 'ok' and data.get('database') == 'connected'"
                     echo "  [PASS] Proxy Nginx redirige exitosamente tráfico API al Backend interno."
                 '''
             }
