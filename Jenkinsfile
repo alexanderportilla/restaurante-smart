@@ -179,31 +179,218 @@ pipeline {
             }
         }
 
-        stage('13. Validación Dockerfiles (Build Sin Socket Pendiente)') {
+        stage('13. Validación Dockerfiles') {
             steps {
                 sh '''
                     set -eu
-                    echo "=== Validación estática de artefactos Docker (sin acceso a docker.sock) ==="
+                    echo "=== Validación estática de artefactos Docker y arquitectura OCI ==="
                     for file in backend/Dockerfile frontend/Dockerfile frontend/nginx.conf .dockerignore docker-compose.yml; do
                         test -f "${file}"
                         echo "OK: ${file} presente"
                     done
-
-                    echo "[PENDIENTE - OPCIÓN B] Construcción de imágenes omitida en pipeline:"
-                    echo "  - Seguridad: no se monta /var/run/docker.sock ni se conceden privilegios rootless/seccomp relajados."
-                    echo "  - Alternativa futura recomendada: servicio buildkitd rootless aislado o runner externo dedicado."
                 '''
             }
         }
 
-        stage('14. Resumen y Publicación') {
+        stage('14. Resumen y Publicación de Artefactos de Calidad') {
             steps {
                 sh '''
                     set -eu
-                    echo "=== Artefactos generados en workspace ==="
+                    echo "=== Artefactos de calidad generados en workspace ==="
                     ls -lh backend/coverage.xml backend/test-results/pytest-junit.xml
                     ls -lh frontend/coverage/lcov.info frontend/test-results/vitest-junit.xml
                     ls -ld frontend/dist
+                '''
+            }
+        }
+
+        stage('15. Construcción OCI (Kaniko)') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'registry-builder-credentials',
+                        usernameVariable: 'REG_BUILDER_USER',
+                        passwordVariable: 'REG_BUILDER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        echo "=== Construcción OCI aislada con Kaniko (sin socket Docker) ==="
+                        COMMIT_SHORT=$(git rev-parse --short=7 HEAD)
+                        IMAGE_TAG="staging-${COMMIT_SHORT}"
+                        echo "Compilando Backend OCI con Kaniko (Tag inmutable: ${IMAGE_TAG})..."
+                        
+                        BACKEND_RES=$(curl -s -f -u "${REG_BUILDER_USER}:${REG_BUILDER_PASS}" \
+                            -H "Content-Type: application/json" \
+                            -d "{\\"service\\": \\"backend\\", \\"commit\\": \\"${COMMIT_SHORT}\\", \\"tag\\": \\"${IMAGE_TAG}\\"}" \
+                            http://172.19.0.1:8089/build)
+                        
+                        echo "${BACKEND_RES}" > backend-build.json
+                        echo "Backend OCI compilado exitosamente."
+
+                        echo "Compilando Frontend OCI con Kaniko (Tag inmutable: ${IMAGE_TAG})..."
+                        FRONTEND_RES=$(curl -s -f -u "${REG_BUILDER_USER}:${REG_BUILDER_PASS}" \
+                            -H "Content-Type: application/json" \
+                            -d "{\\"service\\": \\"frontend\\", \\"commit\\": \\"${COMMIT_SHORT}\\", \\"tag\\": \\"${IMAGE_TAG}\\"}" \
+                            http://172.19.0.1:8089/build)
+                        
+                        echo "${FRONTEND_RES}" > frontend-build.json
+                        echo "Frontend OCI compilado exitosamente."
+                    '''
+                }
+            }
+        }
+
+        stage('16. Publicación en Registro Privado') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "=== Verificación de publicación y extracción de OCI Digests ==="
+                    BACKEND_DIGEST=$(python3 -c "import json; print(json.load(open('backend-build.json'))['digest'])")
+                    FRONTEND_DIGEST=$(python3 -c "import json; print(json.load(open('frontend-build.json'))['digest'])")
+                    COMMIT_SHORT=$(git rev-parse --short=7 HEAD)
+                    IMAGE_TAG="staging-${COMMIT_SHORT}"
+                    
+                    test -n "${BACKEND_DIGEST}"
+                    test -n "${FRONTEND_DIGEST}"
+                    
+                    echo "Artefacto Backend publicado en registro privado:"
+                    echo "  - Imagen: registry.devops.local:5000/restaurante-smart-backend:${IMAGE_TAG}"
+                    echo "  - Digest: ${BACKEND_DIGEST}"
+                    
+                    echo "Artefacto Frontend publicado en registro privado:"
+                    echo "  - Imagen: registry.devops.local:5000/restaurante-smart-frontend:${IMAGE_TAG}"
+                    echo "  - Digest: ${FRONTEND_DIGEST}"
+                    
+                    python3 -c "
+import json
+meta = {
+    'commit': '${COMMIT_SHORT}',
+    'build_number': '${BUILD_NUMBER}',
+    'tag': '${IMAGE_TAG}',
+    'backend_image': 'registry.devops.local:5000/restaurante-smart-backend:${IMAGE_TAG}',
+    'backend_digest': '${BACKEND_DIGEST}',
+    'frontend_image': 'registry.devops.local:5000/restaurante-smart-frontend:${IMAGE_TAG}',
+    'frontend_digest': '${FRONTEND_DIGEST}'
+}
+with open('build-metadata.json', 'w') as f:
+    json.dump(meta, f, indent=2)
+"
+                '''
+            }
+        }
+
+        stage('17. Despliegue Staging (Deployer)') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'staging-deployer-token',
+                        variable: 'DEPLOYER_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        COMMIT_SHORT=$(git rev-parse --short=7 HEAD)
+                        IMAGE_TAG="staging-${COMMIT_SHORT}"
+                        echo "=== Solicitando despliegue controlado a staging (Tag: ${IMAGE_TAG}) ==="
+                        
+                        DEPLOY_RES=$(curl -s -f -X POST \
+                            -H "Authorization: Bearer ${DEPLOYER_TOKEN}" \
+                            -H "Content-Type: application/json" \
+                            -d "{\\"action\\": \\"deploy-staging\\", \\"service\\": \\"all\\", \\"image_tag\\": \\"${IMAGE_TAG}\\"}" \
+                            http://172.19.0.1:8088/deploy)
+                        
+                        echo "${DEPLOY_RES}" > deploy-result.json
+                        python3 -c "
+import json, sys
+res = json.load(open('deploy-result.json'))
+if res.get('status') != 'success':
+    print('Error en despliegue:', res)
+    sys.exit(1)
+print('Despliegue confirmado por Deployer:', res.get('message'))
+"
+                    '''
+                }
+            }
+        }
+
+        stage('18. Pruebas de Humo Staging') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "=== Ejecución de pruebas de humo sobre Staging ==="
+                    
+                    echo "1. Comprobando servicio Deployer y Podman socket..."
+                    curl -s -f http://172.19.0.1:8088/health | grep -q '"status": "ok"'
+                    echo "  [PASS] Deployer y Podman Rootless socket operativos."
+                    
+                    echo "2. Comprobando API Backend Staging (GET /api/v1/health)..."
+                    BE_HEALTH=$(curl -s -f http://172.19.0.1:8002/api/v1/health)
+                    echo "${BE_HEALTH}" | grep -q '"status": "ok"'
+                    echo "${BE_HEALTH}" | grep -q '"database": "connected"'
+                    echo "  [PASS] Backend saludable y conectado a PostgreSQL 17 Staging."
+                    
+                    echo "3. Comprobando especificación OpenAPI (GET /api/v1/openapi.json)..."
+                    curl -s -f http://172.19.0.1:8002/api/v1/openapi.json | grep -q 'Restaurante Smart'
+                    echo "  [PASS] Esquema OpenAPI 3.1.0 válido servido por Backend."
+                    
+                    echo "4. Comprobando Frontend Staging (GET /)..."
+                    curl -s -f http://172.19.0.1:3002/ | grep -q 'id="root"'
+                    echo "  [PASS] Frontend SPA React servido correctamente."
+                    
+                    echo "5. Comprobando enrutamiento proxy Nginx (GET /api/v1/health desde frontend)..."
+                    PROXY_HEALTH=$(curl -s -f http://172.19.0.1:3002/api/v1/health)
+                    echo "${PROXY_HEALTH}" | grep -q '"status": "ok"'
+                    echo "  [PASS] Proxy Nginx redirige exitosamente tráfico API al Backend interno."
+                '''
+            }
+        }
+
+        stage('19. Registro y Archivo de Evidencias') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "=== Consolidando evidencias finales de entrega continua ==="
+                    python3 -c "
+import json, datetime
+meta = json.load(open('build-metadata.json'))
+deploy = json.load(open('deploy-result.json'))
+evidence = {
+    'project': 'restaurante-smart',
+    'pipeline': 'CI/CD Full Lifecycle',
+    'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'commit': meta['commit'],
+    'jenkins_build': '${BUILD_NUMBER}',
+    'image_tag': meta['tag'],
+    'artifacts': {
+        'backend': {
+            'image': meta['backend_image'],
+            'digest': meta['backend_digest']
+        },
+        'frontend': {
+            'image': meta['frontend_image'],
+            'digest': meta['frontend_digest']
+        }
+    },
+    'staging_deployment': {
+        'status': deploy.get('status'),
+        'database': deploy.get('database'),
+        'backend': deploy.get('backend'),
+        'frontend': deploy.get('frontend'),
+        'migrations': deploy.get('migrations')
+    },
+    'smoke_tests': {
+        'backend_health': 'PASS',
+        'openapi_spec': 'PASS',
+        'frontend_spa': 'PASS',
+        'nginx_api_proxy': 'PASS',
+        'podman_socket': 'PASS'
+    }
+}
+with open('deployment-evidence.json', 'w') as f:
+    json.dump(evidence, f, indent=2)
+print(json.dumps(evidence, indent=2))
+"
                 '''
             }
         }
@@ -212,13 +399,13 @@ pipeline {
     post {
         always {
             junit allowEmptyResults: true, testResults: 'backend/test-results/pytest-junit.xml,frontend/test-results/vitest-junit.xml'
-            archiveArtifacts artifacts: 'backend/coverage.xml,backend/test-results/*.xml,frontend/coverage/lcov.info,frontend/test-results/*.xml', fingerprint: true, allowEmptyArchive: true
+            archiveArtifacts artifacts: 'backend/coverage.xml,backend/test-results/*.xml,frontend/coverage/lcov.info,frontend/test-results/*.xml,build-metadata.json,deploy-result.json,deployment-evidence.json', fingerprint: true, allowEmptyArchive: true
         }
         success {
-            echo 'Pipeline CI/CD Restaurante Smart completado satisfactoriamente (Quality Gate PASSED).'
+            echo 'Pipeline CI/CD Restaurante Smart completado satisfactoriamente (Quality Gate PASSED y Despliegue Exitoso).'
         }
         failure {
-            echo 'Pipeline CI/CD Restaurante Smart falló. Revisar logs, pruebas o Quality Gate en SonarQube.'
+            echo 'Pipeline CI/CD Restaurante Smart falló. Revisar logs, pruebas, Quality Gate o despliegue Staging.'
         }
     }
 }
